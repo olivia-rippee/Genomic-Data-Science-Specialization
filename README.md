@@ -1,4 +1,4 @@
-# Genomic Data Science Specialization - Johns Hopkins University (Coursera)
+# [Genomic Data Science Specialization - Johns Hopkins University (Coursera)](https://www.coursera.org/specializations/genomic-data-science)
 
 ---
 
