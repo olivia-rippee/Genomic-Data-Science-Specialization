@@ -1,0 +1,3 @@
+Command 'samtools1' not found, did you mean:
+  command 'samtools' from deb samtools (1.19-1)
+Try: sudo apt install <deb name>

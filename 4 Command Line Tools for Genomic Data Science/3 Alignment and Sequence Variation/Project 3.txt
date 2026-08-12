@@ -1,0 +1,189 @@
+# ------------------------------------------------------------------
+# Install Older Versions of SAMtools, BCFtools, and Bowtie
+# ------------------------------------------------------------------
+sudo apt-get update
+sudo apt-get install build-essential zlib1g-dev libncurses5-dev libbz2-dev liblzma-dev
+
+# Install SAMtools v1.2
+cd ~
+wget https://github.com/samtools/samtools/releases/download/1.2/samtools-1.2.tar.bz2
+tar -xvjf samtools-1.2.tar.bz2
+cd samtools-1.2
+make
+sudo make install
+
+# Install BCFtools v1.2
+cd ~
+wget https://github.com/samtools/bcftools/releases/download/1.2/bcftools-1.2.tar.bz2
+tar -xvjf bcftools-1.2.tar.bz2
+cd bcftools-1.2
+make
+sudo make install
+
+cd ~
+wget https://sourceforge.net/projects/bowtie-bio/files/bowtie2/2.2.5/bowtie2-2.2.5-source.zip
+unzip bowtie2-2.2.5-source.zip
+cd bowtie2-2.2.5
+make
+sudo make install
+
+
+cd /mnt/c/Users/olivi/OneDrive/Python/Genomic\ Data\ Science/4\ Command\ Line\ Tools\ for\ Genomic\ Data\ Science/Data/gencommand_proj3_data
+
+# ------------------------------------------------------------------
+# Bowtie2 Index
+# ------------------------------------------------------------------
+
+# How many sequences were in the genome?
+# ---------------------------------------
+grep -c "^>" wu_0.v7.fas
+	7
+
+# What was the name of the third sequence in the genome file?
+# ------------------------------------------------------------
+grep "^>" wu_0.v7.fas | sed -n '3p' | cut -c2-
+	Chr3
+
+# What was the name of the last sequence in the genome file?
+# -----------------------------------------------------------
+grep "^>" wu_0.v7.fas | tail -n 1 | cut -c2-
+	mitochondria
+
+# How many index files did the operation create?
+# -----------------------------------------------
+bowtie2-build wu_0.v7.fas wu_0
+ls wu_0*.bt2 | wc -l
+	6
+
+# What is the 3-character extension for the index files created?
+# ---------------------------------------------------------------
+ls wu_0*.bt2 | head -n1 | rev | cut -d'.' -f1 | rev
+	bt2
+
+
+
+# ------------------------------------------------------------------
+# Bowtie2 Alignment
+# ------------------------------------------------------------------
+
+# 6 How many reads were in the original fastq file?
+# -----------------------------------------------
+expr $(wc -l < wu_0_A_wgs.fastq) / 4
+	147354
+
+# 7 How many matches (alignments) were reported for the original (full-match) 
+# setting? Exclude lines in the file containing unmapped reads. 
+# -------------------------------------------------------------------------
+bowtie2 –x wu_0/wu_0 –U wu_0_A_wgs.fastq –S out.full.sam
+bowtie2 –x wu_0/wu_0 –U wu_0_A_wgs.fastq –S out.local.sam --local
+
+cat out.full.sam | grep –v “^@” | cut –f3 | grep –v “*” | wc –l
+	137719
+
+# 8 How many matches (alignments) were reported with the local-match 
+# setting? Exclude lines in the file containing unmapped reads. 
+# -----------------------------------------------------------------
+cat out.local.sam | grep –v “^@” | cut –f3 | grep –v “*” | wc –l
+	141044
+
+# 9 How many reads were mapped in the full scenario?
+# -----------------------------------------------------
+Check mapped.{full,local}.stats file
+	137719
+
+# 10 How many reads were mapped in the local scenario?
+# ---------------------------------------------------
+Check mapped.{full,local}.stats file
+	141044
+	
+# 11 How many reads had multiple matches in the full-match scenario? 
+# You can find this in the bowtie2 summary; note that by default 
+# bowtie2 only reports the best match for each read.
+# -----------------------------------------------------
+# Check mapped.{full,local}.stats file
+	43939
+
+# 12 How many reads had multiple matches in the local-match scenario? 
+# Use the format above. You can find this in the bowtie2 summary; 
+# note that by default bowtie2 only reports the best match for each read.
+# -----------------------------------------------------
+# Check mapped.{full,local}.stats file
+	56105
+	
+# 13 How many alignments contained insertions and/or deletions in the full scenario?
+# --------------------------------------------------------------------------------
+cut –f6 out.full.sam | grep –c “[I,D]”
+	2782
+
+
+# 14 How many alignments contained insertions and/or deletions in the full scenario?
+# --------------------------------------------------------------------------------
+cut –f6 out.local.sam | grep –c “[I,D]” 
+	2614
+
+
+
+# ------------------------------------------------------------------
+# BAM Full-Length Aligment
+# ------------------------------------------------------------------
+
+# 15 How many entries were reported for Chr3?
+# -----------------------------------------
+samtools view –bT wu_0.v7.fas out.full.sam > out.full.bam
+samtools sort out.full.bam out.full.sorted
+
+samtools mpileup –f wu_0.v7.fas –uv out.full.sorted.bam > out.full.mpileup.vcf
+
+cat out.full.mpileup.vcf | grep –v “^#” | cut –f1 | grep –c “^Chr3”
+	360295
+
+# 16 How many entries have ‘A’ as the corresponding genome letter?
+# --------------------------------------------------------------
+cat out.full.mpileup.vcf | grep –v “^#” | cut –f4 | grep –P “^A$”
+	1150985
+
+# 17 How many entries have exactly 20 supporting reads (read depth)?
+# --------------------------------------------------------------
+cat out.full.mpileup.vcf | grep –v “^#” | grep –c “DP=20;”
+	1816
+
+# How many entries represent indels?
+# ------------------------------------
+cat out.full.mpileup.vcf | grep –v “^#” | grep –c INDEL
+	1972
+
+# How many entries are reported for position 175672 on Chr1?
+# -----------------------------------------------------------
+cat out.full.mpileup.vcf | grep –v “^#” | cut –f1,2 | grep Chr1 | grep 175672
+	2
+	
+	
+# ------------------------------------------------------------------
+# Call variants
+# ------------------------------------------------------------------
+
+# How many variants are called on Chr3?
+# --------------------------------------
+samtools mpileup –f wu_0.v7.fas –g out.full.sorted.bam > out.full.mpileup.bcf
+bcftools call –m –v –O v out.full.mpileup.bcf > out.final.vcf
+cat out.final.vcf | grep –v “^#” |  cut –f1 | sort | uniq –c | grep “Chr3”
+	398
+
+# How many variants represent an A ->T SNP? (Use 'grep -P' to  allow tabular spaces in the search term.) 
+# ------------------------------------------------
+cat out.final.vcf | grep –v “^#” | cut –f4,5 | grep –P “^A\tT$” | wc -l
+	392
+	
+# How many entries are indels?
+# ------------------------------
+ cat out.final.vcf | grep –v “^ #” | grep –c INDEL
+	320
+
+# How many entries have precisely 20 supporting reads (read depth)?
+# ------------------------------------------------------------------
+cat out.final.vcf | grep –v “^#” | grep –c “DP=20;”
+	2
+	
+# What type of variant (i.e., SNP or INDEL) is called at position 11937923 on Chr3?
+# ---------------------------------------------------------------------
+	cat out.final.vcf | grep –v “^#” | cut -f1-5 | grep Chr3 | grep 11937923

@@ -1,0 +1,51 @@
+
+About:   SNP/indel variant calling from VCF/BCF. To be used in conjunction with bcftools mpileup.
+         This command replaces the former "bcftools view" caller. Some of the original
+         functionality has been temporarily lost in the process of transition to htslib,
+         but will be added back on popular demand. The original calling model can be
+         invoked with the -c option.
+Usage:   bcftools call [options] <in.vcf.gz>
+
+File format options:
+       --no-version                Do not append version and command line to the header
+   -o, --output FILE               Write output to a file [standard output]
+   -O, --output-type b|u|z|v       Output type: 'b' compressed BCF; 'u' uncompressed BCF; 'z' compressed VCF; 'v' uncompressed VCF [v]
+   -O, --output-type u|b|v|z[0-9]  u/b: un/compressed BCF, v/z: un/compressed VCF, 0-9: compression level [v]
+       --ploidy ASSEMBLY[?]        Predefined ploidy, 'list' to print available settings, append '?' for details [2]
+       --ploidy-file FILE          Space/tab-delimited list of CHROM,FROM,TO,SEX,PLOIDY
+   -r, --regions REGION            Restrict to comma-separated list of regions
+   -R, --regions-file FILE         Restrict to regions listed in a file
+       --regions-overlap 0|1|2     Include if POS in the region (0), record overlaps (1), variant overlaps (2) [1]
+   -s, --samples LIST              List of samples to include [all samples]
+   -S, --samples-file FILE         PED file or a file with an optional column with sex (see man page for details) [all samples]
+   -t, --targets REGION            Similar to -r but streams rather than index-jumps
+   -T, --targets-file FILE         Similar to -R but streams rather than index-jumps
+       --threads INT               Use multithreading with INT worker threads [0]
+
+Input/output options:
+   -A, --keep-alts                 Keep all possible alternate alleles at variant sites
+   -*, --keep-unseen-allele        Keep the unobserved allele <*> or <NON_REF>
+   -a, --annotate LIST             Optional tags to output (lowercase allowed); '?' to list available tags
+   -F, --prior-freqs AN,AC         Use prior allele frequencies, determined from these pre-filled tags
+   -G, --group-samples FILE|-      Group samples by population (file with "sample\tgroup") or "-" for single-sample calling.
+                                   This requires FORMAT/QS or other Number=R,Type=Integer tag such as FORMAT/AD
+       --group-samples-tag TAG     The tag to use with -G, by default FORMAT/QS and FORMAT/AD are checked automatically
+   -g, --gvcf INT,[...]            Group non-variant sites into gVCF blocks by minimum per-sample DP
+   -i, --insert-missed             Output also sites missed by mpileup but present in -T
+   -M, --keep-masked-ref           Keep sites with masked reference allele (REF=N)
+   -V, --skip-variants TYPE        Skip indels/snps
+   -v, --variants-only             Output variant sites only
+       --write-index               Automatically index the output files [off]
+
+Consensus/variant calling options:
+   -c, --consensus-caller          The original calling method (conflicts with -m)
+   -C, --constrain STR             One of: alleles, trio (see manual)
+   -m, --multiallelic-caller       Alternative model for multiallelic and rare-variant calling (conflicts with -c)
+   -n, --novel-rate FLOAT,[...]    Likelihood of novel mutation for constrained trio calling, see man page for details [1e-8,1e-9,1e-9]
+   -p, --pval-threshold FLOAT      Variant if P(ref|D)<FLOAT with -c [0.5]
+   -P, --prior FLOAT               Mutation rate (use bigger for greater sensitivity), use with -m [1.1e-3]
+
+Example:
+   # See also http://samtools.github.io/bcftools/howtos/variant-calling.html
+   bcftools mpileup -Ou -f reference.fa alignments.bam | bcftools call -mv -Ob -o calls.bcf
+

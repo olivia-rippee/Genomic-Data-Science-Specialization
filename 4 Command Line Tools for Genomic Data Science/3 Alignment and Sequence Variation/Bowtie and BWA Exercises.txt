@@ -1,0 +1,220 @@
+cd /mnt/c/Users/olivi/OneDrive/Python/Genomic\ Data\ Science/4\ Command\ Line\ Tools\ for\ Genomic\ Data\ Science/Data
+
+# --------------------
+# Bowtie
+# --------------------
+
+sudo apt install bowtie2
+
+bowtie2-build HPV_all.fasta
+mkdir hpv
+bowtie2-build HPV_all.fasta hpv/hpv
+ls hpv
+
+# Map reads to genome
+# --------------------
+wc -l exome.fastq
+bowtie2 >& bowtie2.log
+bowtie2 -p 4 -x /data1/igm3/genomes/hg38/hg38c_exome.fastq -S exome.bt2.sam
+
+	10000 reads: of these:
+		10000 (100.00% unpaired)
+		111 (1.11%) aligned 0 times
+		7830 (78.30%) aligned exactly 1 times
+		2059 (20.59%) aligned >1 times
+	98.98 %overall alignment rate
+
+samtools view -bT /data1/igm3/genomes/hg38/hg38c.fa exome.bt2.sam > exome.bt2.bam
+	SAM header is present: 25 sequences.
+samtools view exome.bt2.bam | more
+
+# Local
+# ------
+bowtie2 -p 4 --local -x /data1/igm3/genomes/hg38/hg38c_exome.fastq -S exome.local.bt2.sam
+
+	10000 reads; of these:
+		10000 (100.00% unpaired)
+		40 (0.40%) aligned 0 times
+		5218 (52.18%) aligned exactly 1 times
+		4742 (47.42%) aligned >1 times
+	99.60 %overall alignment rate
+
+
+# --------------------
+# BWA
+# --------------------
+sudo apt install bwa
+bwa
+	Program: bwa (alignment via Burrows-Wheeler transformation)
+	Version: 0.7.17-r1188
+	Contact: Heng Li <lh3@sanger.ac.uk>
+
+	Usage:   bwa <command> [options]
+
+	Command: index         index sequences in the FASTA format
+			 mem           BWA-MEM algorithm
+			 fastmap       identify super-maximal exact matches
+			 pemerge       merge overlapping paired ends (EXPERIMENTAL)
+			 aln           gapped/ungapped alignment
+			 samse         generate alignment (single ended)
+			 sampe         generate alignment (paired ended)
+			 bwasw         BWA-SW for long queries
+
+			 shm           manage indices in shared memory
+			 fa2pac        convert FASTA to PAC format
+			 pac2bwt       generate BWT from PAC
+			 pac2bwtgen    alternative algorithm for generating BWT
+			 bwtupdate     update .bwt to the new format
+			 bwt2sa        generate SA from BWT and Occ
+
+	Note: To use BWA, you need to first index the genome with `bwa index'.
+		  There are three alignment algorithms in BWA: `mem', `bwasw', and
+		  `aln/samse/sampe'. If you are not sure which to use, try `bwa mem'
+		  first. Please `man ./bwa.1' for the manual.
+
+bwa mem >& bwa.log
+bwa mem -t 4 C exome.fastq > exome.bwa.sam
+more exome.bwa.sam
+samtools view -bT exome.bwa.sam > exome.bwa.bam
+samtools view exome.bwa.bam | more
+
+
+# --------------------
+# SAMtools (mpileup)
+# --------------------
+samtools1 mpileup >& mpileup.log
+samtools view sample.bam | more
+samtools flagstat sample.bam
+samtools1 mpilup -f /data1/igm3/genomes/human_hg19/Homo_sapiens_assembly19.fasta sample.bam > sample.mplieup
+# (already sorted)
+samtools index sample.bam
+ls -l
+more sample.mpileup
+
+# Export to VCF
+samtools1 mpilup -v -u -f /data1/igm3/genomes/human_hg19/Homo_sapiens_assembly19.fasta sample.bam > sample.vcf
+more sample.vcf
+
+# Export to BCF
+samtools1 mpilup -g -f /data1/igm3/genomes/human_hg19/Homo_sapiens_assembly19.fasta sample.bam > sample.bcf
+head sample.bcf
+
+
+# --------------------
+# BCFtools
+# --------------------
+# Produce variant calls
+
+sudo apt install bcftools
+bcftools
+	Program: bcftools (Tools for variant calling and manipulating VCFs and BCFs)
+	Version: 1.19 (using htslib 1.19)
+
+	Usage:   bcftools [--version|--version-only] [--help] <command> <argument>
+
+	Commands:
+
+	 -- Indexing
+		index        index VCF/BCF files
+
+	 -- VCF/BCF manipulation
+		annotate     annotate and edit VCF/BCF files
+		concat       concatenate VCF/BCF files from the same set of samples
+		convert      convert VCF/BCF files to different formats and back
+		head         view VCF/BCF file headers
+		isec         intersections of VCF/BCF files
+		merge        merge VCF/BCF files files from non-overlapping sample sets
+		norm         left-align and normalize indels
+		plugin       user-defined plugins
+		query        transform VCF/BCF into user-defined formats
+		reheader     modify VCF/BCF header, change sample names
+		sort         sort VCF/BCF file
+		view         VCF/BCF conversion, view, subset and filter VCF/BCF files
+
+	 -- VCF/BCF analysis
+		call         SNP/indel calling
+		consensus    create consensus sequence by applying VCF variants
+		cnv          HMM CNV calling
+		csq          call variation consequences
+		filter       filter VCF/BCF files using fixed thresholds
+		gtcheck      check sample concordance, detect sample swaps and contamination
+		mpileup      multi-way pileup producing genotype likelihoods
+		roh          identify runs of autozygosity (HMM)
+		stats        produce VCF/BCF stats
+
+	 -- Plugins (collection of programs for calling, file manipulation & analysis)
+		39 plugins available, run "bcftools plugin -lv" to see a complete list
+
+	 Most commands accept VCF, bgzipped VCF, and BCF with the file type detected
+	 automatically even when streaming from a pipe. Indexed VCF and BCF will work
+	 in all situations. Un-indexed VCF and BCF and streams will work in most but
+	 not all situations.
+
+bcftools1 view
+	About:   VCF/BCF conversion, view, subset and filter VCF/BCF files.
+	Usage:   bcftools view [options] <in.vcf.gz> [region1 [...]]
+
+	Output options:
+		-G, --drop-genotypes              Drop individual genotype information (after subsetting if -s option set)
+		-h, --header-only                 Print only the header in VCF output (equivalent to bcftools head)
+		-H, --no-header                   Suppress the header in VCF output
+			--with-header                 Print both header and records in VCF output [default]
+		-l, --compression-level [0-9]     Compression level: 0 uncompressed, 1 best speed, 9 best compression [-1]
+			--no-version                  Do not append version and command line to the header
+		-o, --output FILE                 Output file name [stdout]
+		-O, --output-type u|b|v|z[0-9]    u/b: un/compressed BCF, v/z: un/compressed VCF, 0-9: compression level [v]
+		-r, --regions REGION              Restrict to comma-separated list of regions
+		-R, --regions-file FILE           Restrict to regions listed in FILE
+			--regions-overlap 0|1|2       Include if POS in the region (0), record overlaps (1), variant overlaps (2) [1]
+		-t, --targets [^]REGION           Similar to -r but streams rather than index-jumps. Exclude regions with "^" prefix
+		-T, --targets-file [^]FILE        Similar to -R but streams rather than index-jumps. Exclude regions with "^" prefix
+			--targets-overlap 0|1|2       Include if POS in the region (0), record overlaps (1), variant overlaps (2) [0]
+			--threads INT                 Use multithreading with INT worker threads [0]
+
+	Subset options:
+		-A, --trim-unseen-allele          Remove '<*>' or '<NON_REF>' at variant (-A) or at all (-AA) sites
+		-a, --trim-alt-alleles            Trim ALT alleles not seen in the genotype fields (or their subset with -s/-S)
+		-I, --no-update                   Do not (re)calculate INFO fields for the subset (currently INFO/AC and INFO/AN)
+		-s, --samples [^]LIST             Comma separated list of samples to include (or exclude with "^" prefix). Be careful
+											when combining filtering with sample subsetting as filtering comes (usually) first.
+											If unsure, split sample subsetting and filtering in two commands, using -Ou when piping.
+		-S, --samples-file [^]FILE        File of samples to include (or exclude with "^" prefix)
+			--force-samples               Only warn about unknown subset samples
+
+	Filter options:
+		-c/C, --min-ac/--max-ac INT[:TYPE]     Minimum/maximum count for non-reference (nref), 1st alternate (alt1), least frequent
+												   (minor), most frequent (major) or sum of all but most frequent (nonmajor) alleles [nref]
+		-f,   --apply-filters LIST             Require at least one of the listed FILTER strings (e.g. "PASS,.")
+		-g,   --genotype [^]hom|het|miss       Require one or more hom/het/missing genotype or, if prefixed with "^", exclude such sites
+		-i/e, --include/--exclude EXPR         Select/exclude sites for which the expression is true (see man page for details)
+		-k/n, --known/--novel                  Select known/novel sites only (ID is not/is '.')
+		-m/M, --min-alleles/--max-alleles INT  Minimum/maximum number of alleles listed in REF and ALT (e.g. -m2 -M2 for biallelic sites)
+		-p/P, --phased/--exclude-phased        Select/exclude sites where all samples are phased
+		-q/Q, --min-af/--max-af FLOAT[:TYPE]   Minimum/maximum frequency for non-reference (nref), 1st alternate (alt1), least frequent
+												   (minor), most frequent (major) or sum of all but most frequent (nonmajor) alleles [nref]
+		-u/U, --uncalled/--exclude-uncalled    Select/exclude sites without a called genotype
+		-v/V, --types/--exclude-types LIST     Select/exclude comma-separated list of variant types: snps,indels,mnps,ref,bnd,other [null]
+		-x/X, --private/--exclude-private      Select/exclude sites where the non-reference alleles are exclusive (private) to the subset samples
+			  --write-index                    Automatically index the output files [off]
+
+bcftools1 view sample.bcf | more
+
+bcftools call >& call.log
+
+bcftools call -v -m -O z -o sample.vcf.gz sample.bcf
+zcat sample.vcf.gz
+zcat sample.vcf.gz | grep -v "^#" | wc -l
+
+# --------------------------------------------------
+# Pipeline for Variant Calling from Aligned Reads
+# --------------------------------------------------
+samtools index sample.bam
+ls -l
+samtools mpileup -g -f /data1/igm3/genomes/human_hg19/Homo_sapiens_assembly19.fasta sample.bam > sample.bcf
+bcftools call -v -m -O z -o sample.vcf.gz sample.bcf
+zcat sample.vcf.gz
+
+# Filters/visual inspection
+samtools tview -p 17:7579600 -d T sample.bam /data1/igm3/genomes/human_hg19/Homo_sapiens_assembly19.fasta
+# or
+samtools tview -p 17:7579600 sample.bam /data1/igm3/genomes/human_hg19/Homo_sapiens_assembly19.fasta | more
