@@ -1,0 +1,253 @@
+---
+title: "Non-Continuous Outcomes and Hypothesis Testing"
+author: "Olivia Rippee"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r SNP data}
+
+library(snpStats)
+library(broom)
+
+data(for.exercise)
+
+# Select every 10th SNP
+use <- seq(1, ncol(snps.10), 10) 
+sub.10 <- snps.10[,use]
+
+# Convert SNP data to a matrix
+snpdata = sub.10@.Data 
+
+# Case/control status
+status = subject.support$cc
+
+```
+
+```{r Q1}
+
+# Extract the 3rd SNP 
+snp3 <- as.numeric(snpdata[, 3]) 
+
+# Recode 0 values to NA 
+snp3[snp3 == 0] <- NA
+
+# Create a data frame and remove missing observations
+data3 <- data.frame(status = status, snp3 = snp3)
+data3 <- na.omit(data3)
+
+# -----------------------------
+# Linear regression
+# -----------------------------
+linear_model <- lm(status ~ snp3, data = data3)
+
+# View results
+summary(linear_model)
+
+# SNP coefficient
+coef(linear_model)["snp3"]
+
+# -----------------------------
+# Logistic regression
+# -----------------------------
+logistic_model <- glm(status ~ snp3, data = data3, family = binomial)
+
+# View results
+summary(logistic_model)
+
+# SNP coefficient
+coef(logistic_model)["snp3"]
+
+# -----------------------------
+# Get coefficients neatly
+# -----------------------------
+tidy(linear_model)
+tidy(logistic_model)
+
+```
+
+```{r Q3}
+
+# Extract the 10th SNP
+snp10 <- as.numeric(snpdata[, 10])
+
+# Recode 0 values to NA
+snp10[snp10 == 0] <- NA
+
+# Create data frame
+data10 <- data.frame(status = status, snp10 = snp10)
+
+# Remove missing observations
+data10 <- na.omit(data10)
+
+# --------------------------------
+# Additive model
+# --------------------------------
+# Each additional copy of the minor allele
+additive_model <- glm(status ~ snp10, data = data10, family = binomial)
+
+# Fitted probabilities
+data10$additive_fitted <- fitted(additive_model)
+
+# --------------------------------
+# Recessive model
+# --------------------------------
+# 2 copies of minor allele = risk, 0 or 1 copy = no risk
+data10$recessive <- ifelse(data10$snp10 == 2, 1, 0)
+
+recessive_model <- glm(status ~ recessive, data = data10, family = binomial)
+
+# Fitted probabilities
+data10$recessive_fitted <- fitted(recessive_model)
+
+# --------------------------------
+# Tables of fitted values vs status
+# --------------------------------
+# Additive model
+table(Status = data10$status,
+  Fitted = round(data10$additive_fitted, 2))
+
+# Recessive model
+table(Status = data10$status,
+  Fitted = round(data10$recessive_fitted, 2))
+
+# View model summaries
+summary(additive_model)
+summary(recessive_model)
+
+```
+
+```{r Q4}
+
+results <- rep(NA, dim(snpdata)[2])
+
+for (i in 1:ncol(snpdata)) {
+  snpdata_i <- as.numeric(snpdata[, i])
+  snpdata_i[snpdata_i == 0] <- NA
+  
+  glm_i <- glm(status ~ snpdata_i, family = "binomial")
+  results[i] <- tidy(glm_i)$statistic[2]}
+
+(results_df <- data.frame(
+  Average = mean(results, na.rm = TRUE),
+  Minimum = min(results, na.rm = TRUE),
+  Maximum = max(results, na.rm = TRUE)))
+
+```
+
+
+```{r Q5}
+
+# Square the logistic regression test statistics
+results_coeff_square <- results^2
+
+# Run SNP association tests
+glm_all <- snp.rhs.tests(status ~ 1, snp.data = sub.10)
+
+# Correlate the squared results with chi-squared statistics
+cor(results_coeff_square, chi.squared(glm_all))
+
+```
+
+```{r montpick data}
+
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/montpick_eset.RData")
+load(file = con)
+close(con)
+mp = montpick.eset
+pdata = pData(mp)
+edata = as.data.frame(exprs(mp))
+fdata = fData(mp)
+
+```
+
+```{r Q6}
+
+library(Biobase)
+library(genefilter)
+
+# Log2 transformation
+log_edata <- log2(as.matrix(edata) + 1)
+
+# Study/population groups
+group <- factor(pdata$study)
+
+# F-tests
+f_results <- rowFtests(log_edata, group)
+
+# t-tests
+t_results <- rowttests(log_edata, group)
+
+# Compare statistics
+head(f_results)
+head(t_results)
+
+# Check F = t^2
+head(f_results$statistic)
+head(t_results$statistic^2)
+
+# Correlation
+cor(f_results$statistic, t_results$statistic^2, use = "complete.obs")
+
+```
+
+```{r Q7}
+
+library(DESeq2)
+library(limma)
+
+# Filter genes
+edata <- edata[rowMeans(edata) > 100, ]
+
+# -----------------------------
+# DESeq2
+# -----------------------------
+de <- DESeqDataSetFromMatrix(edata, pdata, ~ study)
+
+glm_de <- DESeq(de)
+
+result_de <- results(glm_de)
+
+# -----------------------------
+# limma
+# -----------------------------
+edata <- log2(as.matrix(edata) + 1)
+
+mod <- model.matrix(~ as.factor(pdata$study))
+
+fit_limma <- lmFit(edata, mod)
+
+ebayes_limma <- eBayes(fit_limma)
+
+top <- topTable(
+  ebayes_limma,
+  number = nrow(edata),
+  sort.by = "none")
+
+# -----------------------------
+# Correlation
+# -----------------------------
+cor(result_de$stat, top$t)
+
+# -----------------------------
+# MA Plot
+# -----------------------------
+y <- cbind(result_de$stat, top$t)
+plotMA(y)
+
+```
+
+```{r Q8}
+
+# Benjamini-Hochberg adjusted p-values
+deseq_fdr <- p.adjust(result_de$pvalue, method = "BH")
+limma_fdr <- p.adjust(top$P.Value, method = "BH")
+
+# Number significant at FDR < 0.05
+sum(deseq_fdr < 0.05, na.rm = TRUE)
+sum(limma_fdr < 0.05, na.rm = TRUE)
+
+```

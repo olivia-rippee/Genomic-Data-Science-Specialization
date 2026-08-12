@@ -1,0 +1,318 @@
+---
+title: "Preprocessing, Linear Modeling, and Batch Effects"
+author: "Olivia Rippee"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(Biobase)
+library(limma)
+library(sva)
+```
+
+```{r montpick data}
+
+# Load data
+# ------------
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/montpick_eset.RData")
+load(file = con)
+close(con)
+
+# Rename expression set object
+mp = montpick.eset
+
+# Extract phenotype/sample metadata
+pdata=  pData(mp)
+
+# Extract the gene expression matrix and convert it into a data frame
+edata = as.data.frame(exprs(mp))
+
+# Extract feature metadata 
+fdata = fData(mp)
+```
+
+
+```{r Q1}
+
+# Function to calculate percentage of variance explained by PC1
+# --------------------------------------------------------------
+pc1_variance = function(data, center_data = TRUE) {
+  
+  # Perform PCA on samples (transpose so samples are rows and genes are columns)
+  pca = prcomp(t(data), center = center_data, scale. = FALSE)
+  
+  # Calculate percentage of total variance explained by the first principal component
+  pc1 = (pca$sdev[1]^2 / sum(pca$sdev^2)) * 100
+  
+  return(pc1)}
+
+# Apply function
+# ---------------
+
+# No transformation
+pc1_no_transform = pc1_variance(edata, center_data = FALSE)
+
+
+# Log2(data + 1) transformation
+edata_log = log2(edata + 1)
+pc1_log = pc1_variance(edata_log, center_data = FALSE)
+
+
+# Log2(data + 1) transformation, subtract row means
+edata_log_centered = edata_log - rowMeans(edata_log)
+pc1_log_centered = pc1_variance(edata_log_centered)
+
+
+# Results
+# ---------------
+(results = data.frame(
+  Transformation = c(
+    "No transformation",
+    "log2(data + 1)",
+    "log2(data + 1) + subtract row means"),
+  PC1_Variance_Percent = c(
+    pc1_no_transform,
+    pc1_log,
+    pc1_log_centered)))
+
+```
+
+
+```{r Q2}
+
+# Log2(data + 1) transform and subtract row means
+# ------------------------------------------------
+edata_log = log2(edata + 1)
+
+# Subtract each gene's mean expression across samples
+edata_centered = edata_log - rowMeans(edata_log)
+
+
+# Cluster samples using k-means
+# ------------------------------
+
+# Transpose so samples are rows and genes are columns
+sample_data = t(edata_centered)
+
+set.seed(333)
+
+# Perform k-means clustering into two groups
+km = kmeans(sample_data, centers = 2)
+
+# Extract sample cluster assignments
+cluster_indicator = km$cluster
+
+
+# Perform SVD
+# --------------
+svd_result = svd(sample_data)
+
+first_singular_vector = svd_result$u[,1]
+
+
+# Calculate correlation between singular vector and cluster indicator
+# --------------------------------------------------------------------
+(correlation = cor(first_singular_vector, cluster_indicator))
+
+```
+
+```{r bodymap data}
+
+# Load data
+# ------------
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/bodymap_eset.RData")
+load(file = con)
+close(con)
+
+# Rename expression set object
+bm = bodymap.eset
+
+# Extract the gene expression matrix
+edata = exprs(bm)
+
+# Extract phenotype/sample metadata
+pdata_bm = pData(bm)
+
+```
+
+```{r Q3}
+
+# Extract the first gene's counts
+gene1 = edata[1, ]
+
+# Extract number of technical replicates from sample metadata
+replicates = factor(pdata_bm$num.tech.reps)
+
+# Fit linear model treating replicates as a factor
+model = lm(gene1 ~ replicates)
+
+# Display model summary
+summary(model)
+
+# Plot first gene counts versus technical replicates
+plot(replicates, gene1,
+  xlab = "Number of Technical Replicates",
+  ylab = "First Gene Counts",
+  main = "First Gene Counts vs Technical Replicates")
+
+# Add fitted values from the linear model
+points(
+  unique(replicates),
+  fitted(model)[match(unique(replicates), replicates)],
+  col = "red",
+  pch = 19)
+
+```
+
+```{r Q4}
+
+# Extract the first gene's counts
+gene1 = edata[1, ]
+
+# Check the available phenotype variables
+colnames(pdata_bm)
+
+# Fit linear model relating first gene counts to age and sex
+model_age_gender = lm(gene1 ~ age + gender, data = pdata_bm)
+
+# View model results
+summary(model_age_gender)
+
+# Extract coefficient for age
+(age_coefficient <- summary(model_age_gender)$coefficients["age", "Estimate"])
+
+```
+
+```{r Q5}
+
+# Reload montpick data
+
+# Perform log2(data + 1) transformation
+edata_log = log2(edata + 1)
+
+# Create design matrix using population (with intercept)
+X = model.matrix(~ population, data = pdata)
+
+# Fit linear model to all genes using lm.fit
+fit = lm.fit(x = X, y = t(edata_log))
+
+# Display dimensions of output matrices
+(results = data.frame(
+  Matrix = c(
+    "No Residual",
+    "Effects",
+    "Coefficients"),
+  dim = c(
+    dim(fit$residuals),
+    dim(fit$effects),
+    dim(fit$coefficients))))
+
+```
+
+```{r Q7}
+
+# Load bodymap data
+
+# Keep only samples with non-missing age values
+keep <- !is.na(pdata_bm$age)
+
+# Subset the expression matrix to the selected samples
+edata_sub <- edata[, keep]
+
+# Subset the phenotype data to the selected samples
+pdata_sub <- pdata_bm[keep, ]
+
+# Create the design matrix with an intercept and age predictor
+design <- model.matrix(~ age, data = pdata_sub)
+
+# Fit a linear model for every gene
+fit <- lmFit(edata_sub, design)
+
+# Display the coefficient for age for the 1000th gene
+fit$coefficients[1000, "age"]
+
+# Extract the expression values for the 1000th gene
+gene <- edata_sub[1000, ]
+
+# Extract the corresponding age values
+age <- pdata_sub$age
+
+# Plot gene expression vs age
+plot(age, gene,
+     xlab = "Age",
+     ylab = "Expression",
+     main = "Gene 1000")
+
+# Add the fitted regression line to the plot
+abline(a = fit$coefficients[1000, "(Intercept)"],
+       b = fit$coefficients[1000, "age"],
+       col = "red",
+       lwd = 2)
+```
+
+```{r Q8}
+
+# Repeat from Q7, only run if skipping that block ----------
+# Keep only samples with non-missing age values
+keep <- !is.na(pdata_bm$age)
+
+# Subset the expression matrix to the selected samples
+edata_sub <- edata[, keep]
+
+# Subset the phenotype data to the selected samples
+pdata_sub <- pdata_bm[keep, ]
+# ---------------------------------------------------------
+
+# Create the design matrix with age as the outcome and tissue type as an adjustment variable
+design <- model.matrix(~ tissue.type + age, data = pdata_sub)
+
+# Fit a linear model for every gene
+fit <- lmFit(edata_sub, design)
+
+# Display the coefficients for the 1,000th gene
+fit$coefficients[1000, ]
+
+```
+
+```{r Q10}
+
+set.seed(33353)
+
+# Repeat from Q7, only run if skipping that block ----------
+# Keep samples with non-missing age
+keep <- !is.na(pdata_bm$age)
+
+# Subset expression and phenotype data
+edata_sub <- edata[, keep]
+pdata_sub <- pdata_bm[keep, ]
+# ---------------------------------------------------------
+
+# Log2 transform the expression data
+edata_log <- log2(edata_sub + 1)
+
+# Remove genes with low average expression
+edata_log <- edata_log[rowMeans(edata_log) >= 1, ]
+
+# Create the model matrix with age as the outcome variable
+mod <- model.matrix(~ age, data = pdata_sub)
+
+# Create the null model without age
+mod0 <- model.matrix(~ 1, data = pdata_sub)
+
+# Estimate one surrogate variable
+svobj <- sva(edata_log, mod, mod0, n.sv = 1)
+
+# Extract the estimated surrogate variable
+sv <- svobj$sv[, 1]
+
+# Create a data frame containing correlations between surrogate variable and covariates
+(results = data.frame(
+  Variable = c("Age", "Race", "Gender"),
+  Correlation = c(
+    cor(sv, pdata_sub$age),
+    cor(sv, as.numeric(as.factor(pdata_sub$race))),
+    cor(sv, as.numeric(as.factor(pdata_sub$gender)))
+  )))
+```
+

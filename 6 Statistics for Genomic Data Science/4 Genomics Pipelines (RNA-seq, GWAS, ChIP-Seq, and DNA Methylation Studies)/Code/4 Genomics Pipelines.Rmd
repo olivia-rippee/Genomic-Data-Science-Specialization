@@ -1,0 +1,164 @@
+---
+title: "Genomics Pipelines"
+author: "Olivia Rippee"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r Q1}
+
+library(goseq)
+
+# Display the genomes supported by goseq
+x <- supportedGenomes()
+
+# Look for mouse genome builds
+x[x$species == "Mouse", "db"]
+
+```
+
+```{r Bottomly data}
+
+library(Biobase)
+library(limma)
+
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/bottomly_eset.RData")
+load(file = con)
+close(con)
+
+bot = bottomly.eset
+pdata_bot=pData(bot)
+fdata_bot = featureData(bot)
+edata = exprs(bot)
+fdata_bot = fdata_bot[rowMeans(edata) > 5]
+edata = edata[rowMeans(edata) > 5, ]
+edata = log2(edata+1)
+
+```
+
+```{r Q2}
+
+# Differential expression analysis using strain only
+
+# Make sure strain is treated as a factor
+pdata_bot$strain <- factor(pdata_bot$strain)
+
+# Design matrix with strain as the only explanatory variable
+design_strain <- model.matrix(~ strain, data = pdata_bot)
+
+# Fit the linear model
+fit_strain <- lmFit(edata, design_strain)
+
+# Empirical Bayes moderation
+fit_strain <- eBayes(fit_strain)
+
+# Get results in the original gene order
+limma_strain <- topTable(
+  fit_strain,
+  coef = 2,
+  number = nrow(edata),
+  adjust.method = "BH",
+  sort.by = "none")
+
+# Number of genes significant at 5% FDR
+DE_strain <- limma_strain[limma_strain$adj.P.Val < 0.05, ]
+
+nrow(DE_strain)
+
+# Gene identifier of the first significant gene
+rownames(DE_strain)[1]
+
+```
+
+```{r Q3}
+
+library(goseq)
+library(org.Mm.eg.db)
+
+DEgenes <- as.integer(rownames(edata) %in% rownames(DE_strain))
+
+# Give the vector its Ensembl gene IDs
+names(DEgenes) <- rownames(edata)
+
+# Calculate the probability weighting function using mm9
+pwf <- nullp(DEgenes, genome = "mm9", id = "ensGene")
+
+# Perform GO enrichment analysis
+GO.wall <- goseq(pwf, genome = "mm9", id = "ensGene")
+
+# Display the top over-represented categories
+head(GO.wall)
+
+```
+
+```{r Q4}
+
+# Extract top category
+GO.wall <- GO.wall[  order(GO.wall$over_represented_pvalue),]
+
+GO.wall[1, ]
+
+```
+
+```{r Q5}
+
+# Unadjusted analysis: strain only
+# ---------------------------------
+mod_adj <- model.matrix(~ pdata_bot$strain)
+
+fit_limma <- lmFit(edata, mod_adj)
+ebayes_limma <- eBayes(fit_limma)
+
+limma_output <- topTable(
+  ebayes_limma,
+  number = dim(edata)[1],
+  adjust.method = "BH",
+  sort = "none")
+
+genes <- as.integer(limma_output$adj.P.Val < 0.05)
+not_na <- !is.na(genes)
+names(genes) <- rownames(edata)
+genes <- genes[not_na]
+
+pwf <- nullp(genes, "mm9", "ensGene")
+GO.wall <- goseq(pwf, "mm9", "ensGene")
+
+
+# Adjusted analysis: strain + lane
+# ---------------------------------
+mod_adj1 <- model.matrix( ~ pdata_bot$strain + pdata_bot$lane.number)
+
+fit_limma1 <- lmFit(edata, mod_adj1)
+ebayes_limma1 <- eBayes(fit_limma1)
+
+limma_output1 <- topTable(
+  ebayes_limma1,
+  number = dim(edata)[1],
+  adjust.method = "BH",
+  sort = "none")
+
+genes1 <- as.integer(limma_output1$adj.P.Val < 0.05)
+not_na1 <- !is.na(genes1)
+names(genes1) <- rownames(edata)
+genes1 <- genes1[not_na1]
+
+pwf1 <- nullp(genes1, "mm9", "ensGene")
+GO.wall1 <- goseq(pwf1, "mm9", "ensGene")
+
+# Compare the top 10 categories
+# ---------------------------------
+GO.wall_top_10 <- GO.wall[1:10, 1]
+GO.wall1_top_10 <- GO.wall1[1:10, 1]
+
+GO.wall_top_10
+GO.wall1_top_10
+
+# Number of shared categories
+# ---------------------------------
+intersect(GO.wall_top_10, GO.wall1_top_10)
+length(intersect(GO.wall_top_10, GO.wall1_top_10))
+
+```

@@ -1,0 +1,238 @@
+---
+title: "Normalization, Exploratory Analysis, Linear Modeling"
+author: "Olivia Rippee"
+output: html_document
+---
+
+```{r setup, eval=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+```{r}
+x = rnorm(10)
+plot(x,pch=19,col="dodgerblue")
+
+
+y = rbinom(20,size=1,prob=0.5)
+table(y)
+```
+
+```{r Q2}
+library(Biobase)
+library(GenomicRanges)
+data(sample.ExpressionSet, package = "Biobase")
+se = makeSummarizedExperimentFromExpressionSet(sample.ExpressionSet)
+```
+
+```{r Q5}
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/bottomly_eset.RData")
+load(file = con)
+close(con)
+bot = bottomly.eset
+pdata_bot = pData(bot)
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/bodymap_eset.RData")
+load(file = con)
+close(con)
+bm = bodymap.eset
+pdata_bm = pData(bm)
+```
+
+```{r Q6}
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/bodymap_eset.RData")
+load(file = con)
+close(con)
+bm = bodymap.eset
+pdata_bm = pData(bm)
+
+library(plotrix)
+pie3D(pdata_bm$num.tech.reps,labels=pdata_bm$tissue.type)
+```
+
+```{r Q7}
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/bodymap_eset.RData")
+load(file = con)
+close(con)
+bm = bodymap.eset
+edata = exprs(bm)
+
+row_sums = rowSums(edata)
+edata = edata[order(-row_sums),]
+index = 1:500
+heatmap(edata[index,],Rowv=NA,Colv=NA)
+
+```
+
+```{r Q8}
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/bodymap_eset.RData")
+load(file = con)
+close(con)
+bm = bodymap.eset
+pdata = pData(bm)
+edata = exprs(bm)
+
+# First two samples
+x <- edata[, 1]
+y <- edata[, 2]
+
+# MA plot log2(count + 1)
+# ------------------------
+lx <- log2(x + 1)
+ly <- log2(y + 1)
+
+A_log <- (lx + ly) / 2
+M_log <- lx - ly
+
+par(mfrow = c(1, 2))
+plot(A_log, M_log,
+     pch = 16, cex = 0.4,
+     main = "MA Plot: log2(count+1)",
+     xlab = "A = Average log expression",
+     ylab = "M = Log fold change")
+abline(h = 0, col = "red")
+
+# MA plot rlog
+# -------------
+library(DESeq2)
+
+dds <- DESeqDataSetFromMatrix(
+    countData = edata,
+    colData = pData(bm),
+    design = ~ 1)
+
+rld <- rlog(dds, blind = TRUE)
+rlog_mat <- assay(rld)
+
+rx <- rlog_mat[, 1]
+ry <- rlog_mat[, 2]
+
+A_rlog <- (rx + ry) / 2
+M_rlog <- rx - ry
+
+plot(A_rlog, M_rlog,
+     pch = 16, cex = 0.4,
+     main = "MA Plot: rlog",
+     xlab = "A = Average rlog expression",
+     ylab = "M = Difference")
+abline(h = 0, col = "red")
+```
+
+```{r Q9}
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/montpick_eset.RData")
+load(file = con)
+close(con)
+mp = montpick.eset
+pdata = pData(mp)
+edata = as.data.frame(exprs(mp))
+fdata = fData(mp)
+
+library(rafalib)
+source("http://biostat.jhsph.edu/~ajaffe/rafalib/myplclust.R")
+
+# color samples by study
+studies <- as.factor(pdata$study)
+cols <- as.numeric(studies)
+
+# distance function helper
+make_tree <- function(mat) {
+  d <- dist(t(mat))     # samples are columns → transpose
+  h <- hclust(d)
+  myplclust(h, lab.col = cols)}
+
+par(mfrow = c(1, 3))
+
+# No filtering / no transform
+# -----------------------------
+make_tree(as.matrix(edata))
+# 
+# Filter low-expression genes (rowMeans < 100 removed)
+# -----------------------------
+edata_filt <- edata[rowMeans(edata) >= 100, ]
+make_tree(as.matrix(edata_filt))
+
+# log2 transform (no filtering)
+# -----------------------------
+edata_log <- log2(as.matrix(edata) + 1)
+make_tree(edata_log)
+```
+
+```{r Q10}
+con = url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/montpick_eset.RData")
+load(file = con)
+close(con)
+mp = montpick.eset
+pdata = pData(mp)
+edata = as.data.frame(exprs(mp))
+fdata = fData(mp)
+
+# Log2 transform
+# -----------------------------
+edata_log <- log2(as.matrix(edata) + 1)
+
+
+# K-means clustering (k = 2)
+# -----------------------------
+set.seed(1235)
+km <- kmeans(t(edata_log), centers = 2)
+
+# cluster labels
+km_clusters <- km$cluster
+
+# study labels
+studies <- as.factor(pdata$study)
+
+# compare clustering to study
+table(kmeans = km_clusters, study = studies)
+
+
+# Hierarchical clustering (k = 2)
+# -----------------------------
+d <- dist(t(edata_log))
+hc <- hclust(d)
+hc_clusters <- cutree(hc, k = 2)
+
+# compare clustering to study
+table(hierarchical = hc_clusters, study = studies)
+
+
+# Dendrogram
+# -----------------------------
+plot(hc, labels = pdata$study, main = "Hierarchical clustering (log2 data)")
+rect.hclust(hc, k = 2, border = "red")
+
+
+# PCA
+# -----------------------------
+pca <- prcomp(t(edata_log), center = TRUE, scale. = FALSE)
+pc <- data.frame(
+  PC1 = prcomp(t(edata_log))$x[, 1],
+  PC2 = prcomp(t(edata_log))$x[, 2],
+  study = pdata$study,
+  kmeans = factor(km_clusters),
+  hclust = factor(hc_clusters))
+
+par(mfrow = c(1, 2))
+
+# K-means result
+plot(pc$PC1, pc$PC2,
+     col = pc$kmeans,
+     pch = 19,
+     main = "PCA colored by K-means clusters",
+     xlab = "PC1", ylab = "PC2")
+legend("topright", legend = levels(pc$kmeans),
+       col = 1:length(levels(pc$kmeans)), pch = 19)
+
+# Hierarchical clustering result
+plot(pc$PC1, pc$PC2,
+     col = pc$hclust,
+     pch = 19,
+     main = "PCA colored by Hierarchical clusters",
+     xlab = "PC1", ylab = "PC2")
+legend("topright", legend = levels(pc$hclust),
+       col = 1:length(levels(pc$hclust)), pch = 19)
+
+# check alignment with study
+# -----------------------------
+table(kmeans = pc$kmeans, study = pc$study)
+table(hclust = pc$hclust, study = pc$study)
+```
+
