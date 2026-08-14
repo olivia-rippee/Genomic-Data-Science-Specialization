@@ -1,0 +1,200 @@
+---
+title: "1 Bioconductor Data Structures"
+author: "Olivia Rippee"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r CpG islands AH5086}
+
+library(AnnotationHub)
+library(GenomicRanges)
+
+# Search AnnotationHub for the human CpG Island data
+ah <- AnnotationHub()
+
+(ah_human_CpG <- query(ah, c("CpG Islands", "hg19")))
+
+(cpg_AH5086 <- ah_human_CpG[["AH5086"]])
+
+```
+
+# How many islands exists on the autosomes?
+
+```{r CpG autosomes}
+
+# Autosomes
+autosomes <- paste0("chr", 1:22)
+
+# Subset to autosomes
+cpg_AH5086_autosomes <- cpg_AH5086[seqnames(cpg_AH5086) %in% autosomes]
+
+# Count CpG islands
+(length(cpg_AH5086_autosomes)) # 26641
+
+```
+
+# How many CpG Islands exist on chromosome 4?
+
+```{r CpG chr4}
+
+# Subset to chromosome 4
+cpg_AH5086_chr4 <- cpg_AH5086[seqnames(cpg_AH5086) %in% "chr4"]
+
+# Count CpG islands
+(length(cpg_AH5086_chr4)) # 1031
+
+```
+
+# Obtain the data for the H3K4me3 histone modification for the H1 cell line from Epigenomics Roadmap, using AnnotationHub. Subset these regions to only keep regions mapped to the autosomes (chromosomes 1 to 22). How many bases does these regions cover?
+
+```{r H1 H3K4me3}
+
+# Search AnnotationHub for H3K4me3 data from H1 (E003)
+ah_H3K4me <- query(ah, c("H3K4me3", "E003"))
+
+# Pull data
+ah_H3K4me_data <- ah_H3K4me[["AH29884"]]
+
+# Subset to autosomes
+ah_H3K4me_autosome_data <- subset(ah_H3K4me_data, seqnames %in% autosomes)
+
+sum(width(ah_H3K4me_autosome_data)) # 41135164
+
+```
+
+# Obtain the data for the H3K27me3 histone modification for the H1 cell line from Epigenomics Roadmap, using AnnotationHub. Subset these regions to only  keep regions mapped to the autosomes. In the return data, each region has an associated "signalValue". What is the mean signalValue across all regions on the standard chromosomes?
+
+```{r H1 H3K27me3}
+
+# Search AnnotationHub for H3K27me3 data from H1 (E003)
+ah_H3K27me3 <- query(ah, c("H3K27me3", "E003"))
+
+# Pull data
+ah_H3K27me3_data <- ah_H3K27me3[["AH29892"]]
+
+# Subset to autosomes
+ah_H3K27me3_autosomes <- ah_H3K27me3_data[seqnames(ah_H3K27me3_data) %in% autosomes]
+
+# Calculate mean signalValue
+mean(mcols(ah_H3K27me3_autosomes)$signalValue) # 4.770728
+
+```
+
+# Bivalent regions are bound by both H3K4me3 and H3K27me3. Using the regions obtained above, how many bases on the standard chromosomes are bivalently marked?
+
+```{r bivalent regions}
+
+# Find regions that overlap between H3K4me3 and H3K27me3
+bivalent_data <- intersect(ah_H3K4me_autosome_data, ah_H3K27me3_autosomes)
+
+# Calculate the number of bases that are bivalently marked
+sum(width(reduce(bivalent_data))) # 10289096
+
+```
+
+# #xamine the extent to which bivalent regions overlap CpG Islands. How big a fraction (between 0 and 1) of the bivalent regions, overlap one or more CpG Islands?
+
+```{r CpG overlap}
+
+# Find overlaps between bivalent regions and CpG islands
+CpG_bivalent_data <- findOverlaps(bivalent_data, cpg_AH5086_autosomes)
+
+# Fraction of bivalent regions overlapping one or more CpG islands
+fraction_bi <- length(unique(queryHits(CpG_bivalent_data))) / length(bivalent_data)
+
+fraction_bi # 0.5383644
+
+```
+
+# How big a fraction OF the bases, which are part of CpG Islands, are also bivalent marked?
+
+```{r bivalent CpG bases}
+
+# Find overlaps between CpG islands and bivalent regions
+CpG_bivalent_bases <- intersect(cpg_AH5086_autosomes, bivalent_data)
+
+# Fraction of CpG Island bases that are bivalently marked
+fraction_CpG_bivalent <- sum(width(reduce(CpG_bivalent_bases))) /
+  sum(width(reduce(cpg_AH5086_autosomes)))
+
+fraction_CpG_bivalent # 0.1813049
+
+```
+
+# How many bases are bivalently marked within 10kb of CpG Islands?
+
+```{r bivalent regions within 10kb of CpG Islands}
+
+# Expand each CpG Island by 10 kb on each side
+CpG_10k <- resize(cpg_AH5086_autosomes,
+  width = 20000 + width(cpg_AH5086_autosomes), fix = "center")
+
+# Find overlap with bivalent regions
+CpG_10k_bivalent <- intersect(CpG_10k, bivalent_data)
+
+# Count bivalently marked bases within 10 kb of CpG Islands
+sum(width(CpG_10k_bivalent)) # 9782086
+
+```
+
+# How big a fraction of the human genome is contained in a CpG Island?
+
+```{r CpG island genome fraction}
+
+# Get the human genome data from AnnotationHub
+genome <- ah[["AH5018"]]
+
+# Define the autosomes
+autosomes <- paste0("chr", 1:22)
+
+# Calculate the total size of the human autosomes
+genome_size <- sum(as.numeric(seqlengths(genome)[autosomes]))
+
+# Calculate the total number of bases in CpG Islands on the autosomes
+cpg_island_bases <- sum(
+  as.numeric(width(cpg_AH5086[seqnames(cpg_AH5086) %in% autosomes])))
+
+# Calculate the fraction of the genome contained in CpG Islands
+(cpg_fraction <- cpg_island_bases / genome_size) # 0.007047481
+
+```
+
+# Compute an odds-ratio for the overlap of bivalent marks with CpG islands.
+
+```{r odds ratio bivalent CpG}
+
+# Create  2 x 2 contingency table
+inOut <- matrix(0, ncol = 2, nrow = 2)
+
+colnames(inOut) <- c("in", "out")
+rownames(inOut) <- c("in", "out")
+
+# Bases that are both bivalent and in CpG Islands
+inOut[1,1] <- sum(width(intersect(
+  bivalent_data,
+  cpg_AH5086_autosomes,
+  ignore.strand = TRUE)))
+
+# Bivalent bases outside CpG Islands
+inOut[1,2] <- sum(width(setdiff(
+  bivalent_data,
+  cpg_AH5086_autosomes,
+  ignore.strand = TRUE)))
+
+# CpG Island bases that are not bivalent
+inOut[2,1] <- sum(width(setdiff(
+  cpg_AH5086_autosomes,
+  bivalent_data,
+  ignore.strand = TRUE)))
+
+# Bases that are neither bivalent nor in CpG Islands
+(inOut[2,2] <- genome_size - sum(inOut))
+
+# Calculate odds ratio
+(odds_ratio <- inOut[1,1] * inOut[2,2] / (inOut[1,2] * inOut[2,1])) # 169.0962
+
+```

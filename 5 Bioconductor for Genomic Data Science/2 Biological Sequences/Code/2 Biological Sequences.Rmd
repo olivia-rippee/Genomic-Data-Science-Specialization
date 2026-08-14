@@ -1,0 +1,281 @@
+---
+title: "2 Biological Sequences"
+author: "Olivia Rippee"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(Biostrings)
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(AnnotationHub)
+library(GenomicRanges)
+library(GenomicFeatures)
+library(rtracklayer)
+library(IRanges)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+
+# Human hg19 reference genome
+Hsapiens <- BSgenome.Hsapiens.UCSC.hg19
+
+# AnnotationHub
+ah <- AnnotationHub()
+
+```
+
+# What is the GC content of “chr22” in the “hg19” build of the human genome?
+## The reference genome includes “N” bases; exclude those from the calculation.
+
+```{r}
+
+# Count A, C, G, and T bases
+total_bases <- sum(letterFrequency(Hsapiens$chr22, c("A", "C", "G", "T")))
+
+# Count G and C bases
+gc_bases <- sum(letterFrequency(Hsapiens$chr22, c("G", "C")))
+
+# Calculate GC content
+(gc_content <- gc_bases / total_bases) # 0.4798807
+
+```
+
+# What is the mean GC content of H3K27me3 “narrowPeak” regions from Epigenomics Roadmap from the H1 stem cell line on chr 22?
+## Compute the GC content for each peak region as a percentage and then average those percentages to obtain a number between 0 and 1.
+
+```{r}
+
+# Find the H1/E003 H3K27me3 narrowPeak dataset
+H3K27me3_qh <- query(ah, c("H3K27me3", "E003", "narrowPeak"))
+
+# Retrieve the narrowPeak GRanges object
+H3K27me3_data <- H3K27me3_qh[[1]]
+
+# Keep only chr22 peaks
+H3K27me3_data_chr22 <- H3K27me3_data[seqnames(H3K27me3_data) == "chr22"]
+
+# Extract the corresponding DNA sequences
+H3K27me3_data_chr22_seq <- getSeq(Hsapiens, H3K27me3_data_chr22)
+
+# Calculate GC content for each peak
+gcContents <- letterFrequency(H3K27me3_data_chr22_seq, "GC", as.prob = TRUE)
+
+# Average GC content across peaks
+(meanGcContents <- mean(gcContents)) # 0.528866
+
+```
+
+# What is the correlation between GC content and “signalValue” of these regions (on chr22)?
+
+```{r}
+
+# Extract signalValue from the narrowPeak metadata.
+sigV <- mcols(H3K27me3_data_chr22_seq)$signalValue
+
+# Calculate Pearson correlation.
+(gc_signal_cor <- cor(sigV, gcContents, use = "complete.obs")) # 0.004467924
+
+```
+
+# What is the correlation between the “signalValue” of the “narrowPeak” regions and the average “fc.signal” across the same regions?
+## First compute the average fc.signal across each peak using Views,  then correlate those averages with signalValue
+
+```{r}
+
+# Find the E003 H3K27me3 fc.signal BigWig file
+H3K27me3_fc <- query(ah, c("H3K27me3", "E003", "fc.signal"))
+
+# Retrieve the BigWigFile
+H3K27me3_fc_data <- H3K27me3_fc[[1]]
+
+# Define chr22
+gr_chr22 <- GRanges(seqnames = "chr22",
+  ranges = IRanges(start = 1, end = seqlengths(Hsapiens)["chr22"]))
+
+# Import the fc.signal track for chr22 as an Rle
+H3K27me3_fc_rel <- import(H3K27me3_fc_data, which = gr_chr22, as = "Rle")
+
+# Extract the chr22 signal
+H3K27me3_fc_rel_chr22 <- H3K27me3_fc_rel$chr22
+
+# Create Views corresponding to each narrowPeak region
+fc.signal_chr22 <- Views(
+  H3K27me3_fc_rel_chr22,
+  start = start(H3K27me3_data_chr22),
+  end = end(H3K27me3_data_chr22))
+
+# Calculate the mean fc.signal for each peak
+fc.signal_mean <- viewMeans(fc.signal_chr22)
+
+# Correlate mean fc.signal with narrowPeak signalValue
+(signal_fc_cor <- cor(fc.signal_mean, sigV, use = "complete.obs")) # 0.9149614
+
+```
+
+# How many bases on chr22 have an fc.signal greater than or equal to 1?
+
+```{r}
+
+(bases_fc_ge_1 <- sum(H3K27me3_fc_rel_chr22 >= 1)) # 10914671
+
+```
+
+# Identify the regions of the genome where the signal in E003 is 0.5 or lower and the signal in E055 is 2 or higher.
+
+```{r}
+
+# These are regions that gain H3K27me3 signal upon differentiation
+
+# Find the E055 H3K27me3 fc.signal dataset
+H3K27me3_fc_E055 <- query(ah, c("H3K27me3", "E055", "fc.signal"))
+
+# Find the record whose title is the E055 H3K27me3 fc.signal BigWig
+e055_index <- which(
+  grepl("E055-H3K27me3.fc.signal.bigwig",
+    mcols(H3K27me3_fc_E055)$title))[1]
+
+H3K27me3_fc_E055_data <- H3K27me3_fc_E055[[e055_index]]
+
+# Import E055 signal on chr22
+H3K27me3_fc_rel_E055 <- import(H3K27me3_fc_E055_data, which = gr_chr22, as = "Rle")
+
+H3K27me3_fc_rel_E055_chr22 <- H3K27me3_fc_rel_E055$chr22
+
+# Identify regions where E003 signal <= 0.5
+region_E003 <- slice(H3K27me3_fc_rel_chr22, upper = 0.5)
+
+# Identify regions where E055 signal >= 2
+region_E055 <- slice(H3K27me3_fc_rel_E055_chr22, lower = 2)
+
+# Convert Views to IRanges before intersecting
+region_E003 <- as(region_E003, "IRanges")
+region_E055 <- as(region_E055, "IRanges")
+
+# Find regions satisfying both conditions
+inter_region <- intersect(region_E003, region_E055)
+
+# Count the number of bases in those regions
+(bases_gain_H3K27me3 <- sum(width(inter_region))) # 1869937
+
+```
+
+# What is the average observed-to-expected ratio of CpG dinucleotides for CpG Islands on chromosome 22?
+
+```{r}
+
+# Find the hg19 CpG Island dataset.
+CpGIsland <- query(ah, c("hg19", "CpG Islands"))
+
+# Retrieve the CpG Island GRanges object
+CpGIsland_data <- CpGIsland[[1]]
+
+# Keep only CpG Islands on chr22
+CpGIsland_data_chr22 <- CpGIsland_data[seqnames(CpGIsland_data) == "chr22"]
+
+# Extract DNA sequences
+CpGIsland_data_chr22_seq <- getSeq(Hsapiens, CpGIsland_data_chr22)
+
+# Length of each CpG Island
+region_length <- width(CpGIsland_data_chr22_seq)
+
+# Observed frequency of CG dinucleotides.
+# "CG" is the 7th dinucleotide in dinucleotideFrequency().
+observed_CG <- dinucleotideFrequency(CpGIsland_data_chr22_seq)[, "CG"]
+
+observed_CG_frequency <- observed_CG / region_length
+
+# Frequency of C and G
+freq_C <- letterFrequency(CpGIsland_data_chr22_seq, "C")
+freq_G <- letterFrequency(CpGIsland_data_chr22_seq, "G")
+
+# Expected CpG frequency = frequency(C) * frequency(G)
+expected_CG_frequency <- ((freq_C / region_length) * (freq_G / region_length))
+
+# Observed-to-expected ratio for each island.
+observed_expected_ratio <- (observed_CG_frequency / expected_CG_frequency)
+
+# Average across all CpG Islands.
+(mean_observed_expected <- mean(observed_expected_ratio, na.rm = TRUE)) # 0.8340929
+
+```
+
+# How many TATA boxes are there on chr 22 of build hg19 of the human genome?
+## TATA here is "TATAAA". Search both the forward and reverse strands.
+
+```{r}
+
+# Count TATAAA on the forward strand
+tata_forward <- countPattern("TATAAA", Hsapiens$chr22)
+
+# Count TATAAA on the reverse-complement strand
+tata_reverse <- countPattern("TATAAA", reverseComplement(Hsapiens$chr22))
+
+# Total TATAAA sites on either strand
+(tata_boxes <- tata_forward + tata_reverse) # 27263
+
+```
+
+# How many promoters of transcripts on chromosome 22 containing a coding sequence contain a TATA box on the same strand as the transcript?
+## Promoter: 900 bp upstream and 100 bp downstream of the transcription start site
+
+```{r}
+
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+
+# Get transcripts on chr22
+tx_chr22 <- transcripts(txdb, filter = list(tx_chrom = "chr22"))
+
+# Determine which transcripts contain coding sequence
+tx_lengths <- transcriptLengths(txdb, with.cds_len = TRUE)
+
+coding_tx_ids <- tx_lengths$tx_id[tx_lengths$cds_len > 0]
+
+# Keep only coding transcripts on chr22
+coding_tx_chr22 <- tx_chr22[tx_id(tx_chr22) %in% coding_tx_ids]
+
+# Define promoters as 900 bp upstream and 100 bp downstream
+coding_promoters <- promoters(coding_tx_chr22, upstream = 900, downstream = 100)
+
+# Extract promoter sequences
+# getSeq() respects the strand of each promoter, so the sequence
+# is represented in the same orientation as the transcript
+coding_promoter_sequences <- getSeq(Hsapiens, coding_promoters)
+
+# Determine whether each promoter contains TATAAA
+has_tataaa <- vcountPattern("TATAAA", coding_promoter_sequences) > 0
+
+# Count promoters containing at least one TATAAA
+(tata_promoters <- sum(has_tataaa)) # 193
+
+```
+
+# How many bases on chr22 are part of more than one promoter of a coding sequence?
+## Promoter: 900 bp upstream and 100 bp downstream of the transcription start site
+## Ignore strand when determining overlapping promoter regions
+
+```{r}
+
+# Get all transcripts on chr22
+tx_chr22 <- transcripts(txdb, filter = list(tx_chrom = "chr22"))
+
+# Determine which transcripts have a coding sequence
+tx_lengths <- transcriptLengths(txdb, with.cds_len = TRUE)
+
+coding_tx_ids <- tx_lengths$tx_id[tx_lengths$cds_len > 0]
+
+# Keep only coding transcripts
+coding_tx_chr22 <- tx_chr22[tx_id(tx_chr22) %in% coding_tx_ids]
+
+# Define 900 bp upstream / 100 bp downstream promoters
+coding_promoters <- promoters(coding_tx_chr22, upstream = 900, downstream = 100)
+
+# Ignore strand for overlap calculation
+strand(coding_promoters) <- "*"
+
+# Calculate coverage of all coding promoters
+promoter_coverage <- coverage(coding_promoters)
+
+# Count bases covered by more than one promoter
+(bases_multiple_promoters <- sum(promoter_coverage > 1)) # 328099
+
+```

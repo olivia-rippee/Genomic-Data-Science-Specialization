@@ -1,0 +1,305 @@
+---
+title: "4 Bioconductor Data Access and Analysis"
+author: "Olivia Rippee"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Yeast RNAseq Data
+
+```{r yeast RNAseq data}
+
+library(yeastRNASeq)
+fastqFilePath <- system.file("reads", "wt_1_f.fastq.gz", package = "yeastRNASeq")
+
+```
+
+# What fraction of reads in this file has an A nucleotide in the 5th base of the read?
+
+```{r}
+
+# Read the FASTQ file
+x <- readLines(gzfile(fastqFilePath))
+
+# Sequence lines are lines 2, 6, 10, 14, ...
+seqs <- x[seq(2, length(x), by = 4)]
+
+# Get the 5th base of every read
+fifth_base <- substr(seqs, 5, 5)
+
+# Fraction that is A
+mean(fifth_base == "A") # 0.363841
+
+```
+
+# What is the average numeric quality value of the 5th base of these reads?
+
+```{r}
+
+library(ShortRead)
+
+fastqFilePath <- system.file("reads", "wt_1_f.fastq.gz", package = "yeastRNASeq")
+
+reads <- readFastq(fastqFilePath)
+
+# Average quality score of the 5th base
+mean(as(quality(reads), "matrix")[, 5]) # 28.93346
+
+```
+
+# leeBam Data
+
+```{r leeBam data}
+
+library(leeBamViews)
+bamFilePath <- system.file("bam", "isowt5_13e.bam", package="leeBamViews")
+
+```
+
+# In the interval from 800,000 to 801,000 on yeast Chr3, how many reads are duplicated by position?
+
+```{r}
+
+library(Rsamtools)
+library(GenomicRanges)
+
+bamFile <- BamFile(bamFilePath)
+
+gr <- GRanges(seqnames = "Scchr13",
+  ranges = IRanges(start = 800000, end = 801000))
+
+params <- ScanBamParam(which = gr, what = scanBamWhat())
+
+aln <- scanBam(bamFile, param = params)
+
+# Count reads starting at each position
+pos_counts <- table(aln[[1]]$pos)
+
+# Number of reads that have at least one duplicate
+sum(pos_counts[pos_counts >= 2]) # 129
+
+```
+
+```{r leeBam file paths}
+
+# File paths
+bpaths <- list.files(system.file("bam", package="leeBamViews"), pattern = "bam$", full=TRUE)
+
+```
+
+# What is the average number of reads across the 8 samples falling in the interval Scchr13:807762-808068?
+
+```{r}
+
+region <- GRanges(seqnames = "Scchr13",
+  ranges = IRanges(807762, 808068))
+
+counts <- sapply(bpaths, function(bam) {
+  param <- ScanBamParam(which = region, what = "qname")
+  reads <- scanBam(bam, param = param)[[1]]
+  length(reads$qname)})
+
+counts
+mean(counts) # 90.25
+
+```
+
+# In the lecture on the oligo package an ExpressionSet with 18 samples is constructed, representing normalized data from an Affymetrix gene expression microarray. The samples are divided into two groups given by the group variable. What is the average expression across samples in the control group for the “8149273” probeset?
+
+```{r}
+
+library(oligo)
+library(GEOquery)
+
+# Download the GEO data
+getGEOSuppFiles("GSE38792")
+
+# Extract CEL files
+untar("GSE38792/GSE38792_RAW.tar", exdir = "GSE38792/CEL")
+
+# Get CEL file paths
+celfiles <- list.files("GSE38792/CEL", full.names = TRUE)
+
+# Read CEL files
+rawData <- read.celfiles(celfiles)
+
+# Clean sample information
+filename <- sampleNames(rawData)
+
+pData(rawData)$filename <- filename
+
+sampleNames <- sub(".*_", "", filename)
+sampleNames <- sub(".CEL.gz$", "", sampleNames)
+
+sampleNames(rawData) <- sampleNames
+
+pData(rawData)$group <- ifelse(
+  grepl("^OSA", sampleNames(rawData)), "OSA", "Control")
+
+# RMA Normalization
+normData <- rma(rawData)
+
+# Check groups
+pData(normData)$group
+
+# Find the probeset by its (character) identifier
+exprs(normData)["8149273", ]
+
+# Calculate the average expression in the Control group
+control <- pData(normData)$group == "Control"
+
+mean(exprs(normData)["8149273", control]) # 7.02183
+
+```
+
+# Use the limma package to fit a two group comparison between the control group and the OSA group, and borrow strength across the genes using eBayes(). Include all 18 samples in the model fit. What is the absolute value of the log foldchange (logFC) of the gene with the lowest P.value?
+
+```{r}
+
+library(limma)
+
+# Get expression matrix
+expr <- exprs(normData)
+
+# Create the group factor
+group <- factor(pData(normData)$group, levels = c("Control", "OSA"))
+
+# Design matrix
+design <- model.matrix(~ group)
+
+# Fit the model
+fit <- lmFit(expr, design)
+
+# Empirical Bayes moderation
+fit <- eBayes(fit)
+
+# Get results for the OSA vs Control comparison
+results <- topTable(fit, coef = "groupOSA", number = Inf, sort.by = "P")
+
+# View gene with smallest P-value
+results[1, ]
+
+# Absolute value of logFC
+abs(results$logFC[1]) # 0.7126484
+
+```
+
+# How many genes are differentially expressed between the two groups at an adj.P.value cutoff of 0.05?
+
+```{r}
+
+results <- topTable(fit, coef = "groupOSA", number = Inf, adjust.method = "BH")
+
+sum(results$adj.P.Val < 0.05) # 0
+
+```
+
+# An example 450k dataset is contained in the minfiData package. This dataset contains 6 samples; 3 cancer and 3 normals. Cancer has been shown to be globally hypo-methylated (less methylated) compared to normal tissue of the same kind. Take the RGsetEx dataset inthis package and preprocess it with the preprocessFunnorm function. For each sample, compute the average Beta value (percent methylation) across so-called OpenSea loci. What is the mean difference in beta values between the 3 normal samples and the 3 cancer samples, across OpenSea CpGs?
+
+```{r}
+
+library(minfi)
+library(minfiData)
+
+# Beta values after functional normalization
+Beta_value <- getBeta(RGsetEX_normalized)
+
+# OpenSea CpGs
+openSea <- getIslandStatus(RGsetEX_normalized) == "OpenSea"
+Beta_Value_openSea <- Beta_value[openSea, ]
+
+# Identify samples by their actual status
+normal <- pData(RGsetEx)$status == "normal"
+cancer <- pData(RGsetEx)$status == "cancer"
+
+# Average Beta values for each group
+normal_mean <- mean(Beta_Value_openSea[, normal], na.rm = TRUE)
+cancer_mean <- mean(Beta_Value_openSea[, cancer], na.rm = TRUE)
+
+# Difference
+normal_mean - cancer_mean # 0.08863657
+
+```
+
+# The Caco2 cell line is a colon cancer cell line profiled by ENCODE. Obtain the narrowPeak DNase hyper sensitive sites computed by the analysis working group (AWG). How many of these DNase hypersensitive sites contain one or more CpGs on the 450k array?
+
+```{r}
+
+library(AnnotationHub)
+
+ah <- AnnotationHub()
+ah <- subset(ah, species == "Homo sapiens")
+
+# Get Caco2 AWG DNase hypersensitive sites
+ah_Caco2 <- query(ah, c("Caco2", "Awg", "Dna"))
+ah_Caco2 <- ah_Caco2[["AH22442"]]
+
+# 450k CpG locations
+CpG_450K <- granges(RGsetEX_normalized)
+
+# Find 450k CpGs contained within DNase hypersensitive sites
+hits <- findOverlaps(CpG_450K, ah_Caco2, type = "within")
+
+# Count unique DNase sites containing at least one 450k CpG
+length(unique(subjectHits(hits))) # 40151
+
+```
+
+# The zebrafishRNASeq package contains summarized data from an RNA-seq experiment in zebrafish in the form of a data.frame called zfGenes. The experiment compared 3 control samples to 3 treatment samples. Each row is a transcript; the data.frame contains 92 rows with spikein transcripts; these have a rowname starting with “ERCC”. Exclude these rows from the analysis.
+## Use DESeq2 to perform a differential expression analysis between control and treatment. Do not discard (filter) genes and use the padjstart verbatim, padj, end verbatim results output as the p-value. How many features are differentially expressed between control and treatment (ie. padj <= 0.05)?
+
+```{r}
+
+library(zebrafishRNASeq)
+library(DESeq2)
+
+data(zfGenes)
+
+# Remove ERCC spike-in transcripts
+zfGenes_noERCC <- zfGenes[!grepl("^ERCC", rownames(zfGenes)), ]
+
+# Define sample groups
+group <- factor(c("control", "control", "control", "treatment", "treatment", "treatment"))
+
+# Create DESeq2 dataset
+dds <- DESeqDataSetFromMatrix(countData = zfGenes_noERCC,
+  colData = data.frame(group), design = ~ group)
+
+# Differential expression analysis
+dds <- DESeq(dds)
+
+# Get results
+DEgenes <- results(dds)
+
+# Number with adjusted P-value <= 0.05
+sum(DEgenes$padj <= 0.05, na.rm = TRUE) # 116
+
+# Volcano plot
+plot(x = DEgenes$log2FoldChange, y = -log10(DEgenes$padj),
+  pch = 20,
+  col = ifelse(DEgenes$padj <= 0.05, "red", "gray"),
+  xlab = "Log2 Fold Change",
+  ylab = "-Log10 Adjusted P-value",
+  main = "Control vs Treatment")
+
+# Add significance cutoff
+abline(h = -log10(0.05), col = "blue", lty = 2)
+
+# Label the 10 most significant genes
+sig <- which(DEgenes$padj <= 0.05)
+top10 <- sig[order(DEgenes$padj[sig])[1:min(10, length(sig))]]
+
+text(DEgenes$log2FoldChange[top10], 
+     -log10(DEgenes$padj[top10]),
+  labels = rownames(DEgenes)[top10],
+  pos = 3,
+  cex = 0.7)
+
+```
+
+
+
+

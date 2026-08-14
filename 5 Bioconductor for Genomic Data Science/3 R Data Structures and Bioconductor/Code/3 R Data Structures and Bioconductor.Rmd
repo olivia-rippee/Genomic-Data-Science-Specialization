@@ -1,0 +1,260 @@
+---
+title: "3 R Data Structures and Bioconductor"
+author: "Olivia Rippee"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r ALL data}
+library(ALL)
+
+# Load the ALL dataset
+data(ALL)
+```
+
+# What is the mean expression across all features for sample 5 in the ALL dataset (from the ALL package)?
+
+```{r}
+
+# Calculate the mean expression for sample 5
+mean(exprs(ALL)[, 5]) # 5.629627
+
+```
+
+# How many probesets (features) are annotated with more than one Ensembl gene id?
+
+```{r}
+
+library(biomaRt)
+
+# Connect to Ensembl 75 (February 2014 archive)
+mart <- useMart(host = "feb2014.archive.ensembl.org", 
+                biomart = "ENSEMBL_MART_ENSEMBL")
+
+# Select the human Ensembl dataset
+mart <- useDataset(dataset = "hsapiens_gene_ensembl", mart = mart)
+
+# Get the probeset IDs from the ALL dataset
+probes <- featureNames(ALL)
+
+# Annotate probesets with Ensembl gene IDs
+annotation <- getBM(
+  attributes = c("affy_hg_u95av2", "ensembl_gene_id"),
+  filters = "affy_hg_u95av2",
+  values = probes,
+  mart = mart)
+
+# Count how many Ensembl genes are associated with each probeset
+genes_per_probe <- table(annotation$affy_hg_u95av2)
+
+# Count probesets associated with more than one Ensembl gene
+sum(genes_per_probe > 1) # 1045
+
+```
+
+# How many probesets (Affymetrix IDs) are annotated with one or more genes on the autosomes (chromosomes 1 to 22)?
+
+```{r}
+
+# Get chromosome information along with the Affymetrix ID
+annotation <- getBM(
+  attributes = c("affy_hg_u95av2", "ensembl_gene_id", "chromosome_name"),
+  filters = "affy_hg_u95av2",
+  values = probes,
+  mart = mart)
+
+# Keep genes located on chromosomes 1–22
+autosomal <- annotation[annotation$chromosome_name %in% as.character(1:22), ]
+
+# Count unique Affymetrix probesets
+length(unique(autosomal$affy_hg_u95av2)) # 11016
+
+```
+
+# Use the MsetEx dataset from the minfiData package. What is the mean value of the Methylation channel across the features for sample # “5723646052_R04C01”?
+
+```{r}
+
+library(minfi)
+library(minfiData)
+
+# Load the MsetEx dataset
+data(MsetEx)
+
+# Extract the Methylation channel
+meth <- getMeth(MsetEx)
+
+# Calculate the mean across features for the specified sample
+mean(meth[, "5723646052_R04C01"]) # 7228.277
+
+```
+
+# Access the processed data from NCBI GEO Accession number GSE788. What is the mean expression level of sample GSM9024?
+
+```{r}
+
+library(GEOquery)
+
+# Download the processed GEO dataset
+gse <- getGEO("GSE788", GSEMatrix = TRUE)
+
+# Extract the expression data
+expr <- exprs(gse[[1]])
+
+# Calculate mean expression for GSM9024
+mean(expr[, "GSM9024"]) # 756.432
+
+```
+
+# We are using the airway dataset from the airway package. What is the average of the average length across the samples in the experiment?
+
+```{r airway data}
+
+library(airway)
+data(airway)
+
+```
+
+# What is the average of the average length across the samples in the experiment?
+
+```{r}
+
+# View the sample metadata
+colData(airway)
+
+# Extract average length for each sample
+airway$avgLength
+
+# Calculate the average of the average lengths
+mean(airway$avgLength) # 113.75
+
+```
+
+# What is the number of Ensembl genes which have a count of 1 read or more in sample SRR1039512?
+
+```{r}
+
+# Extract counts for sample SRR1039512
+counts <- assay(airway)
+
+sample_counts <- counts[, "SRR1039512"]
+
+# Count Ensembl genes with at least 1 read
+sum(sample_counts >= 1) # 25699
+
+```
+
+# How many of these features overlaps with transcripts on the autosomes (chromosomes 1-22) as represented by the TxDb.Hsapiens.UCSC.hg19.knownGene package?
+
+```{r}
+
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(GenomicFeatures)
+library(GenomicRanges)
+
+# Load the hg19 knownGene annotation
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+
+# Get exons grouped by transcript
+exons <- exonsBy(txdb, by = "tx")
+
+# Keep only exons on autosomes (chromosomes 1-22)
+exons_autosomes <- exons[seqnames(exons) %in% paste0("chr", 1:22)]
+
+# Combine overlapping exons into non-overlapping regions
+exons_autosomes <- reduce(unlist(exons_autosomes))
+
+# Get genomic ranges for airway features
+airway_features <- rowRanges(airway)
+
+# Keep only airway features on chromosomes 1-22
+airway_autosomes <- keepSeqlevels(
+  airway_features,
+  as.character(1:22),
+  pruning.mode = "coarse")
+
+# Change chromosome names from 1, 2, ... to chr1, chr2, ...
+seqlevels(airway_autosomes) <- paste0("chr", seqlevels(airway_autosomes))
+
+# Find overlaps between airway features and actual exons
+hits <- findOverlaps(airway_autosomes, exons_autosomes)
+
+# Count unique airway features with at least one overlap
+length(unique(queryHits(hits))) # 26276
+
+```
+
+# For sample SRR1039508, how big a percentage (between 0 and 1) of the total reads in the airway dataset for that sample, are part of a feature which overlaps an autosomal TxDb.Hsapiens.UCSC.hg19.knownGene transcript?
+
+```{r}
+
+# Counts for sample SRR1039508
+sample_counts <- assay(airway)[, "SRR1039508"]
+
+# Features overlapping autosomal TxDb transcripts
+overlapping_features <- unique(queryHits(hits))
+
+# Convert the feature indices back to the original airway row indices
+overlapping_names <- names(airway_autosomes)[overlapping_features]
+
+overlapping_indices <- match(overlapping_names, rownames(airway))
+
+# Calculate reads in overlapping features
+overlapping_reads <- sum(sample_counts[overlapping_indices], na.rm = TRUE)
+
+# Calculate total reads
+total_reads <- sum(sample_counts)
+
+# Calculate proportion
+(percentage <- overlapping_reads / total_reads) # 0.9004193
+
+```
+
+# What is the median number of counts per feature (for sample SRR1039508) containing a H3K4me narrowPeak in their promoter (only features which overlap autosomal transcripts from TxDb.Hsapiens.UCSC.hg19.knownGene are considered)?
+
+```{r}
+
+library(AnnotationHub)
+library(GenomicRanges)
+
+# Get E096 H3K4me3 narrowPeak data
+ah <- AnnotationHub()
+qah_h1 <- query(ah, c("E096", "H3K4me3"))
+h1 <- qah_h1[["AH30596"]]
+
+# Keep autosomes
+autosome <- paste0("chr", 1:22)
+
+h1 <- keepSeqlevels(h1, autosome, pruning.mode = "coarse")
+
+# Get airway feature ranges that overlap autosomal TxDb transcripts
+t <- rowRanges(airway)[overlapping_indices]
+
+# Convert airway chromosome names to UCSC style
+old <- seqlevels(t)
+new <- paste0("chr", old)
+names(new) <- old
+t <- renameSeqlevels(t, new)
+
+# Keep autosomes
+t <- keepSeqlevels(t, autosome, pruning.mode = "coarse")
+
+# Standard 2.2 kb promoter
+p <- promoters(t)
+
+# Find promoters containing H3K4me3 peaks
+ov <- subsetByOverlaps(p, h1)
+
+# Get the corresponding original airway feature indices
+marked <- overlapping_indices[match(names(ov), names(t))]
+
+# Counts for SRR1039508
+marked_counts <- sample_counts[marked]
+
+# Median count
+median(marked_counts, na.rm = TRUE) # 170
+
+```
